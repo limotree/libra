@@ -319,6 +319,7 @@ async fn emit_tx(cluster: &Cluster, args: &Args) -> Result<()> {
     }
     let stats = emitter.stop_job(job).await;
     println!("Total stats: {}", stats);
+    println!("this is debug");
     println!("Average rate: {}", stats.rate(duration));
     Ok(())
 }
