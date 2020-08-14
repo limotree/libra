@@ -6,6 +6,11 @@
 # Usage ./dev_setup.sh <options>
 #   v - verbose, print all statements
 
+# Assumptions for nix systems:
+# 1 The running user is the user who will execute the builds.
+# 2 .profile will be used to configure the shell
+# 3 ${HOME}/bin/ is expected to be on the path - hashicorp tools/hadolint/etc.  will be installed there on linux systems.
+
 SCRIPT_PATH="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 cd "$SCRIPT_PATH/.."
 
@@ -13,17 +18,65 @@ function usage {
   echo "Usage:"
   echo "Installs or updates necessary dev tools for libra/libra."
   echo "-b batch mode, no user interactions and miminal output"
+  echo "-o intall operations tooling as well: helm, terraform, hadolint, yamllint, vault, docker, kubectl, python3"
   echo "-v verbose mode"
   echo "should be called from the root folder of the libra project"
 }
 
-function install_toolchain {
-	version=$1
-	if [[ "rustup show | grep $version | wc -l" == "0" ]]; then
-      rustup install $version
-    else
-      echo "$version rust toolchain already installed"
+function install_hadolint {
+  mkdir -p ${HOME}/bin
+  export HADOLINT=${HOME}/bin/hadolint
+  export HADOLINT_VER=v1.17.4
+  curl -sL -o ${HADOLINT} "https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VER}/hadolint-$(uname -s)-$(uname -m)" && chmod 700 ${HADOLINT}
+}
+
+
+function install_helm {
+
+}
+
+function install_terraform {
+
+}
+
+function install_vault {
+
+}
+
+function install_kubectl {
+
+}
+
+function install_pkg {
+    package=$1
+    package_manager=$2
+    pre_command=""
+    if [ `whoami` != 'root' ]; then
+      pre_command="sudo "
     fi
+    if which $package &>/dev/null; then
+        echo "$package is already installed"
+    else
+        echo "Installing $package."
+        if [[ "$PACKAGE_MANAGER" == "yum" ]]; then
+                $PRE_COMMAND yum install $package -y
+        elif [[ "$PACKAGE_MANAGER" == "apt-get" ]]; then
+                $PRE_COMMAND apt-get install $package -y
+        elif [[ "$PACKAGE_MANAGER" == "pacman" ]]; then
+                $PRE_COMMAND pacman -Syu $package --noconfirm
+        elif [[ "$PACKAGE_MANAGER" == "brew" ]]; then
+                brew install $package
+        fi
+    fi
+}
+
+function install_toolchain {
+  version=$1
+  if [[ "rustup show | grep $version | wc -l" == "0" ]]; then
+    rustup install $version
+  else
+    echo "$version rust toolchain already installed"
+  fi
 }
 
 function welcome_message {
@@ -35,7 +88,9 @@ build, test and inspect Libra Core. This includes:
 	* Rust (and the necessary components, e.g. rust-fmt, clippy)
 	* Useful rust tooling (grcov for for code coverage)
 	* CMake
-    * Clang
+	* Clang
+        * pkg-config
+        * libssl-dev
 	* lcov
 
 If you'd prefer to install these dependencies yourself, please exit this script
@@ -44,13 +99,17 @@ EOF
 }
 
 BATCH_MODE=false;
-VERBOSE=false
+VERBOSE=false;
+OPERATIONS=false;
 
 #parse args
-while getopts "bvh" arg; do
+while getopts "bvho" arg; do
   case $arg in
     b)
       BATCH_MODE="true"
+      ;;
+   o)
+      OPERATIONS="true"
       ;;
     v)
       VERBOSE=true
@@ -66,7 +125,7 @@ if [[ $VERBOSE == "true" ]]; then
 	set -x
 fi
 
-if [ ! -f Cargo.toml ]; then
+if [ ! -f rust-toolchain ]; then
 	echo "Unknown location. Please run this from the libra repository. Abort."
 	exit 1
 fi
@@ -105,56 +164,25 @@ if [[ $BATCH_MODE == "false" ]]; then
     fi
 fi
 
+PRE_COMMAND=""
+if [ `whoami` != 'root' ]; then
+  PRE_COMMAND="sudo "
+fi
+
 if [[ $"$PACKAGE_MANAGER" == "apt-get" ]]; then
 	[[ BATCH_MODE == "false" ]] && echo "Updating apt-get......"
-	sudo apt-get update
-fi
-
-[[ BATCH_MODE == "false" ]] && echo "Installing CMake......"
-if which cmake &>/dev/null; then
-	[[ BATCH_MODE == "false" ]] && echo "CMake is already installed"
-else
-	if [[ "$PACKAGE_MANAGER" == "yum" ]]; then
-		sudo yum install cmake -y
-	elif [[ "$PACKAGE_MANAGER" == "apt-get" ]]; then
-		sudo apt-get install cmake -y
-	elif [[ "$PACKAGE_MANAGER" == "pacman" ]]; then
-		sudo pacman -Syu cmake --noconfirm
-	elif [[ "$PACKAGE_MANAGER" == "brew" ]]; then
-		brew install cmake
-	fi
-fi
-
-[[ BATCH_MODE == "false" ]] && echo "Installing Clang......"
-if which clang &>/dev/null; then
-        [[ BATCH_MODE == "false" ]] && echo "Clang is already installed"
-else
-        if [[ "$PACKAGE_MANAGER" == "yum" ]]; then
-                sudo yum install clang -y
-        elif [[ "$PACKAGE_MANAGER" == "apt-get" ]]; then
-                sudo apt-get install clang llvm 
-        elif [[ "$PACKAGE_MANAGER" == "pacman" ]]; then
-                sudo pacman -Syu clang --noconfirm
-        elif [[ "$PACKAGE_MANAGER" == "brew" ]]; then
-                brew install llvm
-        fi
+	$PRE_COMMAND apt-get update
 fi
 
 
-[[ BATCH_MODE == "false" ]] && echo "Installing curl......"
-if which curl &>/dev/null; then
-        [[ BATCH_MODE == "false" ]] && echo "Clang is already installed"
-else
-        if [[ "$PACKAGE_MANAGER" == "yum" ]]; then
-                sudo yum install curl -y
-        elif [[ "$PACKAGE_MANAGER" == "apt-get" ]]; then
-                sudo apt-get install curl
-        elif [[ "$PACKAGE_MANAGER" == "pacman" ]]; then
-                sudo pacman -Syu curl --noconfirm
-        elif [[ "$PACKAGE_MANAGER" == "brew" ]]; then
-                brew install curl
-        fi
-fi
+install_pkg cmake $PACKAGE_MANAGER $BATCH_MODE
+install_pkg clang $PACKAGE_MANAGER $BATCH_MODE
+install_pkg llvm $PACKAGE_MANAGER $BATCH_MODE
+install_pkg curl $PACKAGE_MANAGER $BATCH_MODE
+
+#need to change....
+install_pkg libssl-dev $PACKAGE_MANAGER $BATCH_MODE
+install_pkg pkg-config $PACKAGE_MANAGER $BATCH_MODE  # pkgconfig in centos
 
 # Install Rust
 [[ BATCH_MODE == "false" ]] && echo "Installing Rust......"
@@ -180,6 +208,14 @@ if [[ `sccache --version` != "sccache 0.2.13" ]]; then
   cargo install sccache --version=0.2.13
 fi
 
+if [[ $OPERATIONS == "true" ]]; then
+  install_hadolint
+  install_helm
+  install_terraform
+  install_vault
+  install_kubectl
+fi
+
 
 [[ BATCH_MODE == "false" ]] && cat <<EOF
 
@@ -189,3 +225,5 @@ You should now be able to build the project by running:
 	source $HOME/.cargo/env
 	cargo build
 EOF
+
+exit 0

@@ -8,27 +8,27 @@ orbs:
 executors:
   build-executor:
     docker:
-      - image: circleci/rust:buster
+      - image: libra/build_environment:latest
     resource_class: 2xlarge
   unittest-executor:
     docker:
-      - image: circleci/rust:buster
+      - image: libra/build_environment:latest
     resource_class: 2xlarge+
   test-executor:
     docker:
-      - image: circleci/rust:buster
+      - image: libra/build_environment:latest
     resource_class: xlarge
   premainnet-cluster-test-executor:
     docker:
-      - image: circleci/rust:buster
+      - image: libra/build_environment:latest
     resource_class: xlarge
   audit-executor:
     docker:
-      - image: circleci/rust:buster
+      - image: libra/build_environment:latest
     resource_class: medium
   terraform-executor:
     docker:
-      - image: hashicorp/terraform
+      - image: libra/build_environment:latest
     resource_class: small
   docker-executor:
     machine:
@@ -55,19 +55,7 @@ commands:
             echo 'export CI_TIMEOUT="timeout 40m"' >> $BASH_ENV
             export RUST_NIGHTLY=$(cat cargo-toolchain)
             echo 'export RUST_NIGHTLY='${RUST_NIGHTLY} >> $BASH_ENV
-  install_deps:
-    steps:
-      - run:
-          name: Install Dependencies
-          command: |
-            sudo apt-get update
-            sudo apt-get install -y cmake curl clang llvm gcc-powerpc-linux-gnu
-            rustup default `cat rust-toolchain`
-            rustup component add clippy rustfmt
-            rustup toolchain install $RUST_NIGHTLY
-      - run:
-          name: Set cargo Environment
-          command: |
+
             # Turn on the experimental feature resolver in cargo. See:
             # https://doc.rust-lang.org/nightly/cargo/reference/unstable.html#features
             export CARGOFLAGS=$(cat cargo-flags)
@@ -76,41 +64,10 @@ commands:
             echo 'export CARGO="$(rustup which cargo --toolchain $RUST_NIGHTLY)"' >> $BASH_ENV
             # Pin the version of RUSTC used for all invocations of cargo
             echo 'export RUSTUP_TOOLCHAIN="$(cat rust-toolchain)"' >> $BASH_ENV
-  install_docker_linter:
-    steps:
-      - run:
-          name: install dockerfile linter (hadolint)
-          command: |
-            export HADOLINT=${HOME}/hadolint
-            export HADOLINT_VER=v1.17.4
-            curl -sL -o ${HADOLINT} "https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VER}/hadolint-$(uname -s)-$(uname -m)" && chmod 700 ${HADOLINT}
-  install_rust_nightly_toolchain:
-    steps:
-      - run:
-          name: Install nightly toolchain for features not in beta/stable
-          command: rustup install nightly
-  install_sccache:
-    steps:
-      - restore_cache:
-          name: Restore sccache binary
-          key: sccache-bin-{{ checksum "rust-toolchain" }}-{{ checksum "cargo-toolchain" }}
-      - run:
-          name: Install scccache
-          command: |
-            if ! [ -e /usr/local/cargo/bin/sccache ]; then
-              $CARGO $CARGOFLAGS install sccache --version=0.2.13
-            else
-              echo 'sccache binary is found. Skipping install.'
-            fi
             echo 'export SCCACHE_CACHE_SIZE=2G' >> $BASH_ENV
             echo 'export RUSTC_WRAPPER=sccache' >> $BASH_ENV
             echo 'export CC="sccache cc"' >> $BASH_ENV
             echo 'export CXX="sccache c++"' >> $BASH_ENV
-      - save_cache:
-          name: Save sccache binary
-          key: sccache-bin-{{ checksum "rust-toolchain" }}-{{ checksum "cargo-toolchain" }}
-          paths:
-            - "/usr/local/cargo/bin/sccache"
   save_sccache:
     description: Save shared compilation cache for future jobs
     steps:
@@ -284,7 +241,6 @@ commands:
       - checkout
       - print_versions
       - env_setup
-      - install_deps
   build_teardown:
     steps:
       - run:
@@ -327,7 +283,6 @@ jobs:
           name: Git Hooks and Checks
           command: ./scripts/git-checks.sh
       - restore_cargo_package_cache
-      - install_sccache
       - run:
           name: Fetch workspace dependencies over network
           command: $CARGO $CARGOFLAGS fetch
@@ -338,7 +293,6 @@ jobs:
     steps:
       - build_setup
       - restore_cargo_package_cache
-      - install_sccache
       - restore_sccache
       - run:
           name: cargo lint
@@ -374,7 +328,6 @@ jobs:
     steps:
       - build_setup
       - restore_cargo_package_cache
-      - install_sccache
       - restore_sccache
       - run:
           command: RUST_BACKTRACE=1 $CARGO $CARGOFLAGS build -j 16
@@ -406,7 +359,6 @@ jobs:
     steps:
       - build_setup
       - restore_cargo_package_cache
-      - install_sccache
       - restore_sccache
       - run:
           name: Determine test targets for this container.
@@ -470,7 +422,6 @@ jobs:
     steps:
       - build_setup
       - restore_cargo_package_cache
-      - install_sccache
       - restore_sccache
       - run:
           name: Run all unit tests
@@ -496,7 +447,6 @@ jobs:
     steps:
       - build_setup
       - restore_cargo_package_cache
-      - install_sccache
       - restore_sccache
       - run:
           name: Build benchmark targets without running
@@ -555,13 +505,11 @@ jobs:
       - run:
           name: Check if the docker build job should run
           command: .circleci/should_build_docker.sh
-      - install_docker_linter
       - find_dockerfile_changes
       - run:
           name: Lint DockerFile changes
           command: |
-            export HADOLINT=${HOME}/hadolint
-            ${HADOLINT} -c .lintrules/hadolint.yaml $CHANGED_DOCKER_FILES || true
+            hadolint -c .lintrules/hadolint.yaml $CHANGED_DOCKER_FILES || true
   check-breaking-change:
     executor: audit-executor
     description: Detect breaking change in CLI
@@ -635,7 +583,6 @@ jobs:
     steps:
       - build_setup
       - restore_cargo_package_cache
-      - install_sccache
       - restore_sccache
       - run:
           name: Generate documentation
@@ -670,6 +617,25 @@ jobs:
           name: Deploy to gh-pages branch
           command: |
             gh-pages --dotfiles --message "[skip ci] documentation update" --dist target/doc
+
+  ######################################################################################################
+  # Publish docker ci base image to docker hub                                                         #
+  ######################################################################################################
+  docker-ci-publish:
+    executor: docker-executor
+    description: publish docker images
+    steps:
+      - checkout
+      - setup_docker_signing
+      - setup_aws
+      - run:
+          name: pull pre images (or build if not pullable) and push release docker images
+          command: |
+            set -x
+            cd docker/ci/
+            docker build -f Dockerfile ../../
+            docker tag build_environment libra/build_environment:latest
+            docker push libra/build_environment:latest
 
   ######################################################################################################
   # Publish docker artifacts for prs targeting release branches built in "auto" by bors                #
@@ -743,7 +709,6 @@ workflows:
           filters:
             branches:
               ignore:
-                - gh-pages
                 - master
                 - /^test-[\d|.]+$/
                 - /^release-[\d|.]+$/
@@ -751,7 +716,6 @@ workflows:
           filters:
             branches:
               ignore:
-                - gh-pages
                 - master
                 - /^test-[\d|.]+$/
                 - /^release-[\d|.]+$/
@@ -771,7 +735,6 @@ workflows:
           filters:
             branches:
               ignore:
-                - gh-pages
                 - master
                 - /^test-[\d|.]+$/
                 - /^release-[\d|.]+$/
@@ -781,7 +744,6 @@ workflows:
           filters:
             branches:
               ignore:
-                - gh-pages
                 - master
                 - /^test-[\d|.]+$/
                 - /^release-[\d|.]+$/
@@ -791,7 +753,6 @@ workflows:
           filters:
             branches:
               ignore:
-                - gh-pages
                 - master
                 - /^test-[\d|.]+$/
                 - /^release-[\d|.]+$/
@@ -801,7 +762,6 @@ workflows:
           filters:
             branches:
               ignore:
-                - gh-pages
                 - master
                 - /^test-[\d|.]+$/
                 - /^release-[\d|.]+$/
@@ -811,7 +771,6 @@ workflows:
           filters:
             branches:
               ignore:
-                - gh-pages
                 - master
                 - /^test-[\d|.]+$/
                 - /^release-[\d|.]+$/
@@ -842,6 +801,14 @@ workflows:
             branches:
               only:
                 - auto
+      - docker-ci-publish:
+          context: docker
+          filters:
+            branches:
+              only:
+                - /^test-[\d|.]+$/
+                - /^release-[\d|.]+$/
+                - master
       - docker-publish:
           context: docker
           filters:
